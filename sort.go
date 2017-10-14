@@ -15,6 +15,33 @@ import (
 	"os"
 )
 
+type pixel struct {
+	R    uint32
+	G    uint32
+	B    uint32
+	H    float64
+	S    float64
+	V    float64
+	H2   int64
+	Lum2 int64
+	V2   int64
+}
+
+func makePixel(c color.Color) pixel {
+	R, G, B, _ := c.RGBA()
+	H, S, V := rgbToHSV(R, G, B)
+	H2, Lum2, V2 := luminosity(R, G, B, H, V)
+	return pixel{R, G, B, H, S, V, H2, Lum2, V2}
+}
+
+func (p pixel) RGBA() (r, g, b, a uint32) {
+	r = p.R
+	g = p.G
+	b = p.B
+	a = math.MaxUint32
+	return
+}
+
 func handleError(e error) {
 	if e != nil {
 		panic(e)
@@ -33,8 +60,7 @@ func seedRandom() {
 	rand.Seed(int64(seed))
 }
 
-func rgbToHSV(c color.Color) (h, s, v float64) {
-	r, g, b, _ := c.RGBA()
+func rgbToHSV(r, g, b uint32) (h, s, v float64) {
 	rprime := float64(r) / 255.0
 	gprime := float64(g) / 255.0
 	bprime := float64(b) / 255.0
@@ -61,18 +87,61 @@ func rgbToHSV(c color.Color) (h, s, v float64) {
 	return h, s, v
 }
 
+func luminosity(r, g, b uint32, h, v float64) (h2, lum2, v2 int64) {
+	lum := math.Sqrt(0.241*float64(r) + .691*float64(g) + 0.068*float64(b))
+	h2 = int64(h * 8)
+	lum2 = int64(lum * 8)
+	v2 = int64(v * 8)
+
+	if h2%2 == 1 {
+		v2 = 8 - v2
+		lum2 = 8 - lum2
+	}
+	return
+}
+
+func StepHSVaGreaterThanB(a, b pixel) bool {
+	if a.H > b.H {
+		return true
+	} else if a.H2 < b.H2 {
+		return false
+	} else if a.Lum2 > b.Lum2 {
+		return true
+	} else if a.Lum2 < b.Lum2 {
+		return false
+	} else if a.V2 > b.V2 {
+		return true
+	}
+	return false
+}
+
+func HSVaGreaterThanB(a, b pixel) bool {
+	if a.H > b.H {
+		return true
+	} else if a.H < b.H {
+		return false
+	} else if a.S > b.S {
+		return true
+	} else if a.S < b.S {
+		return false
+	} else if a.V > b.V {
+		return true
+	}
+	return false
+}
+
 func aGreaterThanB(a, b color.Color) bool {
-	ah, as, av := rgbToHSV(a)
-	bh, bs, bv := rgbToHSV(b)
-	if ah > bh {
+	ar, ag, ab, _ := a.RGBA()
+	br, bg, bb, _ := b.RGBA()
+	if ar > br {
 		return true
-	} else if ah < bh {
+	} else if ar < br {
 		return false
-	} else if as > bs {
+	} else if ag > bg {
 		return true
-	} else if as < bs {
+	} else if ag < bg {
 		return false
-	} else if av > bv {
+	} else if ab > bb {
 		return true
 	}
 	return false
@@ -100,40 +169,51 @@ func insertionSort(data []byte) []byte {
 	return sorted
 }
 
+func toImage(p []pixel, out draw.Image) draw.Image {
+	maxX := out.Bounds().Max.X
+	maxY := out.Bounds().Max.Y
+	for i := 0; i < len(p); i++ {
+		x, y := toXY(i, maxX, maxY)
+		out.Set(x, y, p[i])
+	}
+	return out
+}
+
 func selectionSortI(in image.Image) image.Image {
 	step := 0
-	data := in.(draw.Image)
-	iMaxX := data.Bounds().Max.X
-	iMaxY := data.Bounds().Max.Y
-	fmt.Printf("X: %d\t Y: %d\n", iMaxX, iMaxY)
+	out := in.(draw.Image)
+
+	// Copy data
+	data := make([]pixel, in.Bounds().Max.X*in.Bounds().Max.Y)
+	for i := 0; i < len(data); i++ {
+		x, y := toXY(i, in.Bounds().Max.X, in.Bounds().Max.Y)
+		data[i] = makePixel(in.At(x, y))
+	}
+
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
-	for slot := iMaxX*iMaxY - 1; slot >= 0; slot-- {
+	for slot := len(data) - 1; slot >= 0; slot-- {
 		max := 0
 		for i := 1; i <= slot; i++ {
-			maxX, maxY := toXY(max, iMaxX, iMaxY)
-			iX, iY := toXY(i, iMaxX, iMaxY)
-			if aGreaterThanB(data.At(iX, iY), data.At(maxX, maxY)) {
+			if StepHSVaGreaterThanB(data[i], data[max]) {
 				max = i
 			}
 		}
 		if max != slot {
-			slotX, slotY := toXY(slot, iMaxX, iMaxY)
-			maxX, maxY := toXY(max, iMaxX, iMaxY)
-			tmp := data.At(slotX, slotY)
-			data.Set(slotX, slotY, data.At(maxX, maxY))
-			data.Set(maxX, maxY, tmp)
+			tmp := data[slot]
+			data[slot] = data[max]
+			data[max] = tmp
 		}
 		fmt.Printf("Step %06d\n", step)
 		if step%100 == 0 {
-			filename := fmt.Sprintf("%09d.png", step)
-			out, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0665)
+			filename := fmt.Sprintf("s%09d.png", step)
+			outfile, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0665)
 			handleError(err)
-			err = enc.Encode(out, data)
+			err = enc.Encode(outfile, toImage(data, out))
 			handleError(err)
 		}
 		step++
 	}
-	return data
+	return out
 }
 
 func main() {
