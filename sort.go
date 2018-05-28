@@ -177,7 +177,7 @@ func insertionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *in
 		step := 0
 		data := *copyImage(in)
 		fmt.Printf("Print with compare #%d\n", index)
-		prefix := fmt.Sprint("insertion_%d", index)
+		prefix := fmt.Sprintf("insertion_%d", index)
 
 		for i := 0; i < len(data); i++ {
 			for j := i; j > 0 && compare(data[j-1], data[j]); j-- {
@@ -199,7 +199,7 @@ func selectionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *in
 		step := 0
 		data := *copyImage(in)
 		fmt.Printf("Print with compare #%d\n", index)
-		prefix := fmt.Sprint("selection_%d", index)
+		prefix := fmt.Sprintf("selection_%d", index)
 
 		for slot := len(data) - 1; slot >= 0; slot-- {
 			max := 0
