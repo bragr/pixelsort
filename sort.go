@@ -164,6 +164,18 @@ func writeStep(prefix string, step int, stepLimit *int, enc *png.Encoder, out *d
 	}
 }
 
+func swap(i, j, maxX, maxY int, data *[]pixel, out *draw.Image) {
+	tmp := (*data)[j]
+
+	(*data)[j] = (*data)[i]
+	x, y := toXY(j, maxX, maxY)
+	(*out).Set(x, y, (*data)[i])
+
+	(*data)[i] = tmp
+	x, y = toXY(i, maxX, maxY)
+	(*out).Set(x, y, tmp)
+}
+
 func insertionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *int) {
 	maxX := in.Bounds().Max.X
 	maxY := in.Bounds().Max.Y
@@ -178,15 +190,7 @@ func insertionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *in
 
 		for i := 0; i < len(data); i++ {
 			for j := i; j > 0 && compare.exec(&data[j-1], &data[j]); j-- {
-				tmp := data[j-1]
-
-				data[j-1] = data[j]
-				x, y := toXY(j-1, maxX, maxY)
-				out.Set(x, y, data[j])
-
-				data[j] = tmp
-				x, y = toXY(j, maxX, maxY)
-				out.Set(x, y, tmp)
+				swap(j, j-1, maxX, maxY, &data, &out)
 				writeStep(prefix, step, stepLimit, enc, &out)
 				step++
 			}
@@ -214,18 +218,38 @@ func selectionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *in
 				}
 			}
 			if max != slot {
-				tmp := data[slot]
-
-				data[slot] = data[max]
-				x, y := toXY(slot, maxX, maxY)
-				out.Set(x, y, data[max])
-
-				data[max] = tmp
-				x, y = toXY(max, maxX, maxY)
-				out.Set(x, y, tmp)
+				swap(max, slot, maxX, maxY, &data, &out)
 			}
 			writeStep(prefix, step, stepLimit, enc, &out)
 			step++
+		}
+	}
+}
+
+func BubbleSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *int) {
+	maxX := in.Bounds().Max.X
+	maxY := in.Bounds().Max.Y
+	enc := &png.Encoder{CompressionLevel: png.BestSpeed}
+
+	for _, compare := range *compares {
+		step := 0
+		data := *copyImage(in)
+		out := in.(draw.Image)
+		fmt.Printf("Print with compare %s\n", compare.name)
+		prefix := fmt.Sprintf("bubble_%s", compare.name)
+
+		next := 0
+		for n := len(data); n > 0; {
+			next = 0
+			for i := 1; i < n; i++ {
+				if compare.exec(&data[i-1], &data[i]) {
+					swap(i, i-1, maxX, maxY, &data, &out)
+					next = i
+				}
+			}
+			n = next
+			step++
+			writeStep(prefix, step, stepLimit, enc, &out)
 		}
 	}
 }
@@ -241,6 +265,7 @@ func main() {
 	//Which sorts to run
 	enableInsertion := flag.Bool("insertion", false, "Enable insertion sort")
 	enableSelection := flag.Bool("selection", false, "Enable selection sort")
+	enableBubble := flag.Bool("bubble", false, "Enable bubble sort")
 
 	//Which comparisons to use
 	enableStepHSV := flag.Bool("stephsv", false, "Enable STEP HSV comparison")
@@ -271,5 +296,8 @@ func main() {
 	}
 	if *enableSelection {
 		selectionSort(origImage, &compare, frameStep)
+	}
+	if *enableBubble {
+		BubbleSort(origImage, &compare, frameStep)
 	}
 }
