@@ -254,6 +254,54 @@ func BubbleSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *int) 
 	}
 }
 
+func splitAndMerge(b, a *[]pixel, begin, end int, compare PixelAGreaterThanB, out *draw.Image, step *int, stepLimit *int, maxX int, maxY int, prefix *string, enc *png.Encoder) {
+	if end-begin < 2 {
+		return
+	}
+
+	// split
+	middle := (end + begin) / 2
+	splitAndMerge(a, b, begin, middle, compare, out, step, stepLimit, maxX, maxY, prefix, enc)
+	splitAndMerge(a, b, middle, end, compare, out, step, stepLimit, maxX, maxY, prefix, enc)
+
+	(*step)++
+
+	// merge
+	i := begin
+	j := middle
+	for k := begin; k < end; k++ {
+		if i < middle && (j >= end || compare.exec(&(*b)[j], &(*b)[i])) {
+			(*a)[k] = (*b)[i]
+			x, y := toXY(k, maxX, maxY)
+			(*out).Set(x, y, (*b)[i])
+			i = i + 1
+		} else {
+			(*a)[k] = (*b)[j]
+			x, y := toXY(k, maxX, maxY)
+			(*out).Set(x, y, (*b)[j])
+			j = j + 1
+		}
+	}
+	writeStep(*prefix, *step, stepLimit, enc, out)
+}
+
+func MergeSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *int) {
+	maxX := in.Bounds().Max.X
+	maxY := in.Bounds().Max.Y
+	enc := &png.Encoder{CompressionLevel: png.BestSpeed}
+
+	for _, compare := range *compares {
+		step := 0
+		data := copyImage(in)
+		scratch := copyImage(in)
+		out := in.(draw.Image)
+		fmt.Printf("Print with compare %s\n", compare.name)
+		prefix := fmt.Sprintf("merge_%s", compare.name)
+
+		splitAndMerge(data, scratch, 0, len(*data), compare, &out, &step, stepLimit, maxX, maxY, &prefix, enc)
+	}
+}
+
 func main() {
 	fmt.Println("Hello sort!")
 	defer fmt.Println("Goodbye sort!")
@@ -266,6 +314,7 @@ func main() {
 	enableInsertion := flag.Bool("insertion", false, "Enable insertion sort")
 	enableSelection := flag.Bool("selection", false, "Enable selection sort")
 	enableBubble := flag.Bool("bubble", false, "Enable bubble sort")
+	enableMerge := flag.Bool("merge", false, "Enable merge sort")
 
 	//Which comparisons to use
 	enableStepHSV := flag.Bool("stephsv", false, "Enable STEP HSV comparison")
@@ -299,5 +348,8 @@ func main() {
 	}
 	if *enableBubble {
 		BubbleSort(origImage, &compare, frameStep)
+	}
+	if *enableMerge {
+		MergeSort(origImage, &compare, frameStep)
 	}
 }
