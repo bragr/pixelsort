@@ -1,17 +1,14 @@
 package main
 
 import (
-	"bufio"
-	"encoding/binary"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	_ "image/jpeg"
 	"image/png"
-	"io"
 	"math"
-	"math/rand"
 	"os"
 )
 
@@ -46,18 +43,6 @@ func handleError(e error) {
 	if e != nil {
 		panic(e)
 	}
-}
-
-func seedRandom() {
-	f, err := os.Open("/dev/urandom")
-	handleError(err)
-	reader := bufio.NewReader(f)
-
-	seedArray := make([]byte, 8)
-	_, err = io.ReadFull(reader, seedArray)
-	handleError(err)
-	seed := binary.LittleEndian.Uint64(seedArray)
-	rand.Seed(int64(seed))
 }
 
 func rgbToHSV(r, g, b uint32) (h, s, v float64) {
@@ -99,6 +84,8 @@ func luminosity(r, g, b uint32, h, v float64) (h2, lum2, v2 int64) {
 	}
 	return
 }
+
+type PixelAGreaterThanB func(a, b pixel) bool
 
 func StepHSVaGreaterThanB(a, b pixel) bool {
 	if a.H > b.H {
@@ -153,9 +140,40 @@ func toXY(i, xSize, ySize int) (x, y int) {
 	return x, y
 }
 
-func insertionSort(data []byte) []byte {
-	sorted := make([]byte, len(data))
-	copy(sorted, data)
+func toImage(p *[]pixel, out *draw.Image) *draw.Image {
+	maxX := (*out).Bounds().Max.X
+	maxY := (*out).Bounds().Max.Y
+	for i := 0; i < len(*p); i++ {
+		x, y := toXY(i, maxX, maxY)
+		(*out).Set(x, y, (*p)[i])
+	}
+	return out
+}
+
+func copyImage(in image.Image) *[]pixel {
+	// Copy data
+	data := make([]pixel, in.Bounds().Max.X*in.Bounds().Max.Y)
+	for i := 0; i < len(data); i++ {
+		x, y := toXY(i, in.Bounds().Max.X, in.Bounds().Max.Y)
+		data[i] = makePixel(in.At(x, y))
+	}
+	return &data
+}
+
+func writeStep(prefix string, step int, stepLimit int, enc *png.Encoder, out *draw.Image, data *[]pixel) {
+	if step%stepLimit == 0 {
+		fmt.Printf("Step %06d\n", step)
+		filename := fmt.Sprintf("%s_%09d.png", prefix, step)
+		outfile, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0665)
+		handleError(err)
+		err = enc.Encode(outfile, *toImage(data, out))
+		handleError(err)
+	}
+}
+
+func insertionSort(in image.Image, frameStep int) {
+	sorted := *copyImage(in)
+
 	step := 0
 	for i := 0; i < len(sorted); i++ {
 		for j := i; j > 0 && sorted[j-1] > sorted[j]; j-- {
@@ -166,31 +184,14 @@ func insertionSort(data []byte) []byte {
 			step++
 		}
 	}
-	return sorted
 }
 
-func toImage(p []pixel, out draw.Image) draw.Image {
-	maxX := out.Bounds().Max.X
-	maxY := out.Bounds().Max.Y
-	for i := 0; i < len(p); i++ {
-		x, y := toXY(i, maxX, maxY)
-		out.Set(x, y, p[i])
-	}
-	return out
-}
-
-func selectionSortI(in image.Image) image.Image {
+func selectionSort(in image.Image, stepLimit int) {
 	step := 0
 	out := in.(draw.Image)
+	data := *copyImage(in)
 
-	// Copy data
-	data := make([]pixel, in.Bounds().Max.X*in.Bounds().Max.Y)
-	for i := 0; i < len(data); i++ {
-		x, y := toXY(i, in.Bounds().Max.X, in.Bounds().Max.Y)
-		data[i] = makePixel(in.At(x, y))
-	}
-
-	enc := png.Encoder{CompressionLevel: png.BestSpeed}
+	enc := &png.Encoder{CompressionLevel: png.BestSpeed}
 	for slot := len(data) - 1; slot >= 0; slot-- {
 		max := 0
 		for i := 1; i <= slot; i++ {
@@ -203,38 +204,40 @@ func selectionSortI(in image.Image) image.Image {
 			data[slot] = data[max]
 			data[max] = tmp
 		}
-		fmt.Printf("Step %06d\n", step)
-		if step%100 == 0 {
-			filename := fmt.Sprintf("s%09d.png", step)
-			outfile, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0665)
-			handleError(err)
-			err = enc.Encode(outfile, toImage(data, out))
-			handleError(err)
-		}
+		writeStep("selection", step, stepLimit, enc, &out, &data)
 		step++
 	}
-	return out
 }
 
 func main() {
 	fmt.Println("Hello sort!")
 	defer fmt.Println("Goodbye sort!")
-	seedRandom()
 
-	if len(os.Args) < 2 {
-		fmt.Println("FEED ME MORE ARGS")
-		os.Exit(1)
-	}
-	filename := os.Args[1]
-	inFile, err := os.Open(filename)
+	//Basic Options
+	filename := flag.String("f", "", "Input file")
+	frameStep := flag.Int("step", 100, "How often to output a frame")
+
+	//Which sorts to run
+	enableInsertion := flag.Bool("insertion", false, "Enable insertion sort")
+	enableSelection := flag.Bool("selection", false, "Enable selection sort")
+
+	//Which comparisons to use
+	enableStepHSV := flag.Bool("stephsv", false, "Enable STEP HSV comparison")
+	enableHSV := flag.Bool("hsv", false, "Enable HSV comparison")
+	enableSimple := flag.Bool("simple", false, "Enable simple comparison")
+
+	flag.Parse()
+
+	// Open the Image
+	inFile, err := os.Open(*filename)
 	handleError(err)
 	origImage, _, err := image.Decode(inFile)
 	handleError(err)
 
-	maxX := origImage.Bounds().Max.X
-	maxY := origImage.Bounds().Max.Y
-	fmt.Printf("X: %d\t Y: %d\n", maxX, maxY)
-
-	_ = selectionSortI(origImage)
-
+	if *enableInsertion {
+		insertionSort(origImage, *frameStep)
+	}
+	if *enableSelection {
+		selectionSort(origImage, *frameStep)
+	}
 }
