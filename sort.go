@@ -85,9 +85,12 @@ func luminosity(r, g, b uint32, h, v float64) (h2, lum2, v2 int64) {
 	return
 }
 
-type PixelAGreaterThanB func(a, b pixel) bool
+type PixelAGreaterThanB struct {
+	name string
+	exec func(a, b *pixel) bool
+}
 
-func StepHSVaGreaterThanB(a, b pixel) bool {
+func StepHSVaGreaterThanB(a, b *pixel) bool {
 	if a.H > b.H {
 		return true
 	} else if a.H2 < b.H2 {
@@ -102,7 +105,7 @@ func StepHSVaGreaterThanB(a, b pixel) bool {
 	return false
 }
 
-func HSVaGreaterThanB(a, b pixel) bool {
+func HSVaGreaterThanB(a, b *pixel) bool {
 	if a.H > b.H {
 		return true
 	} else if a.H < b.H {
@@ -117,7 +120,7 @@ func HSVaGreaterThanB(a, b pixel) bool {
 	return false
 }
 
-func AGreaterThanB(a, b pixel) bool {
+func AGreaterThanB(a, b *pixel) bool {
 	if a.R > b.R {
 		return true
 	} else if a.R < b.R {
@@ -138,16 +141,6 @@ func toXY(i, xSize, ySize int) (x, y int) {
 	return x, y
 }
 
-func toImage(p *[]pixel, out *draw.Image) *draw.Image {
-	maxX := (*out).Bounds().Max.X
-	maxY := (*out).Bounds().Max.Y
-	for i := 0; i < len(*p); i++ {
-		x, y := toXY(i, maxX, maxY)
-		(*out).Set(x, y, (*p)[i])
-	}
-	return out
-}
-
 func copyImage(in image.Image) *[]pixel {
 	// Copy data
 	data := make([]pixel, in.Bounds().Max.X*in.Bounds().Max.Y)
@@ -158,33 +151,43 @@ func copyImage(in image.Image) *[]pixel {
 	return &data
 }
 
-func writeStep(prefix string, step int, stepLimit *int, enc *png.Encoder, out *draw.Image, data *[]pixel) {
+func writeStep(prefix string, step int, stepLimit *int, enc *png.Encoder, out *draw.Image) {
 	if step%*stepLimit == 0 {
 		fmt.Printf("Step %06d\n", step)
+
 		filename := fmt.Sprintf("%s_%09d.png", prefix, step)
 		outfile, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0665)
 		handleError(err)
-		err = enc.Encode(outfile, *toImage(data, out))
+
+		err = enc.Encode(outfile, *out)
 		handleError(err)
 	}
 }
 
 func insertionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *int) {
-	out := in.(draw.Image)
+	maxX := in.Bounds().Max.X
+	maxY := in.Bounds().Max.Y
 	enc := &png.Encoder{CompressionLevel: png.BestSpeed}
 
-	for index, compare := range *compares {
+	for _, compare := range *compares {
 		step := 0
 		data := *copyImage(in)
-		fmt.Printf("Print with compare #%d\n", index)
-		prefix := fmt.Sprintf("insertion_%d", index)
+		out := in.(draw.Image)
+		fmt.Printf("Print with compare %s\n", compare.name)
+		prefix := fmt.Sprintf("insertion_%s", compare.name)
 
 		for i := 0; i < len(data); i++ {
-			for j := i; j > 0 && compare(data[j-1], data[j]); j-- {
+			for j := i; j > 0 && compare.exec(&data[j-1], &data[j]); j-- {
 				tmp := data[j-1]
+
 				data[j-1] = data[j]
+				x, y := toXY(j-1, maxX, maxY)
+				out.Set(x, y, data[j])
+
 				data[j] = tmp
-				writeStep(prefix, step, stepLimit, enc, &out, &data)
+				x, y = toXY(j, maxX, maxY)
+				out.Set(x, y, tmp)
+				writeStep(prefix, step, stepLimit, enc, &out)
 				step++
 			}
 		}
@@ -192,28 +195,36 @@ func insertionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *in
 }
 
 func selectionSort(in image.Image, compares *[]PixelAGreaterThanB, stepLimit *int) {
-	out := in.(draw.Image)
+	maxX := in.Bounds().Max.X
+	maxY := in.Bounds().Max.Y
 	enc := &png.Encoder{CompressionLevel: png.BestSpeed}
 
-	for index, compare := range *compares {
+	for _, compare := range *compares {
 		step := 0
 		data := *copyImage(in)
-		fmt.Printf("Print with compare #%d\n", index)
-		prefix := fmt.Sprintf("selection_%d", index)
+		out := in.(draw.Image)
+		fmt.Printf("Print with compare %s\n", compare.name)
+		prefix := fmt.Sprintf("selection_%s", compare.name)
 
 		for slot := len(data) - 1; slot >= 0; slot-- {
 			max := 0
 			for i := 1; i <= slot; i++ {
-				if compare(data[i], data[max]) {
+				if compare.exec(&data[i], &data[max]) {
 					max = i
 				}
 			}
 			if max != slot {
 				tmp := data[slot]
+
 				data[slot] = data[max]
+				x, y := toXY(slot, maxX, maxY)
+				out.Set(x, y, data[max])
+
 				data[max] = tmp
+				x, y = toXY(max, maxX, maxY)
+				out.Set(x, y, tmp)
 			}
-			writeStep(prefix, step, stepLimit, enc, &out, &data)
+			writeStep(prefix, step, stepLimit, enc, &out)
 			step++
 		}
 	}
@@ -246,13 +257,13 @@ func main() {
 
 	compare := []PixelAGreaterThanB{}
 	if *enableStepHSV {
-		compare = append(compare, StepHSVaGreaterThanB)
+		compare = append(compare, PixelAGreaterThanB{"step_hsv", StepHSVaGreaterThanB})
 	}
 	if *enableHSV {
-		compare = append(compare, HSVaGreaterThanB)
+		compare = append(compare, PixelAGreaterThanB{"hsv", HSVaGreaterThanB})
 	}
 	if *enableSimple {
-		compare = append(compare, AGreaterThanB)
+		compare = append(compare, PixelAGreaterThanB{"simple", AGreaterThanB})
 	}
 
 	if *enableInsertion {
